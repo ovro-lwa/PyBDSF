@@ -227,25 +227,117 @@ def process_image(input, **kwargs):
         > img_VirA = bdsf.process_image('VirA_im.pybdsf.sav')
           --> load parameter save file and process
     """
-    from .interface import load_pars
+    from .interface import load_pars, set_pars
     from .image import Image
+    from .functions import read_image_from_file, set_up_output_paths
+    from .mylogger import init_logger, logging as _logging
+    from .readimage import Op_readimage, TempDir
     import os
 
-    # Try to load input assuming it's a parameter save file or a dictionary.
-    # load_pars returns None if this doesn't work.
+    # First, try to load parameters (save file or dict). If that fails, handle image inputs.
     img, err = load_pars(input)
 
-    # If load_pars fails (returns None), assume that input is an image file. If it's not a
-    # valid image file (but is an existing file), an error will be raised
-    # by img.process() during reading of the file.
+    # If load_pars did not produce an Image, handle file path or HDU objects
     if img is None:
+        # Detect FITS HDUList or single HDU objects (astropy.io.fits)
+        try:
+            from astropy.io import fits as _fits
+        except Exception:
+            _fits = None
+
+        is_hdulist = _fits is not None and isinstance(input, getattr(_fits, 'HDUList', tuple()))
+        is_hdu = _fits is not None and hasattr(input, 'header') and hasattr(input, 'data')
+
+        if is_hdulist or is_hdu:
+            # Wrap single HDU into an HDUList
+            hdul = input if is_hdulist else _fits.HDUList([input])
+
+            # Create Image with a placeholder filename for logging/output paths
+            img = Image({'filename': 'in_memory.fits'})
+
+            # Apply early opts needed for logger/outdir
+            if 'quiet' in kwargs:
+                img.opts.quiet = kwargs['quiet']
+            if 'debug' in kwargs:
+                img.opts.debug = kwargs['debug']
+            if 'outdir' in kwargs:
+                img.opts.outdir = kwargs['outdir']
+
+            # Initialize logger (mirrors execute())
+            _, basedir = set_up_output_paths(img.opts)
+            basename = os.path.basename(img.opts.filename) + '.pybdsf.log'
+            logfilename = os.path.join(basedir, basename)
+            init_logger(logfilename, quiet=img.opts.quiet, debug=img.opts.debug)
+            mylog = _logging.getLogger("PyBDSF.Init")
+            mylog.info("Processing in-memory FITS HDU")
+
+            # Read data/header using existing reader with HDUList support
+            result = read_image_from_file(hdul, img, indir=None)
+            if result is None:
+                raise RuntimeError("Cannot read FITS HDU object.")
+            data, hdr = result
+
+            # Minimal initialization mirroring Op_readimage.__call__
+            img.filename = img.opts.filename
+            img.indir = './'
+            parentname, basedir = set_up_output_paths(img.opts)
+            img.parentname = parentname
+            img.imagename = img.parentname + '.pybdsf'
+            img.outdir = basedir
+            img.basedir = os.path.join(basedir, img.parentname+'_pybdsf')
+            if img.opts.solnname is not None:
+                img.basedir += img.opts.solnname
+
+            # Caching flag
+            img.do_cache = bool(getattr(img.opts, 'do_cache', False))
+            if img.do_cache:
+                import tempfile
+                if not os.path.exists(img.outdir):
+                    os.makedirs(img.outdir)
+                tmpdir = os.path.join(img.outdir, img.parentname+'_tmp')
+                if not os.path.exists(tmpdir):
+                    os.makedirs(tmpdir)
+                img._tempdir_parent = TempDir(tmpdir)
+                img.tempdir = TempDir(tempfile.mkdtemp(dir=tmpdir))
+            else:
+                img.tempdir = None
+
+            # Store data/header and basic attributes
+            img.nchan = data.shape[1]
+            img.nstokes = data.shape[0]
+            img.image_arr = data
+            img.header = hdr
+            img.shape = data.shape
+            img.j = 0
+
+            # Initialize WCS/beam/freq using Op_readimage helpers
+            _op = Op_readimage()
+            _op.init_wcs(img)
+            _op.init_beam(img)
+            _op.init_freq(img)
+            year, _ = _op.get_equinox(img)
+            img.equinox = 2000.0 if year is None else year
+
+            # Mark readimage as completed and run the remaining ops
+            img.completed_Ops.append('readimage')
+
+            # Apply user kwargs to options before processing further
+            if kwargs:
+                set_pars(img, **kwargs)
+
+            # Build chain without Op_readimage
+            from . import default_chain
+            chain = default_chain[1:]
+            _run_op_list(img, chain)
+            return img
+
+        # Else, assume a filesystem path
         if os.path.exists(input):
             img = Image({'filename': input})
         else:
-            raise RuntimeError("File '" + input + "' not found.")
+            raise RuntimeError("File '" + str(input) + "' not found.")
 
-    # Set logging and outdir options (must be done explicitly, as they are used before the
-    # kwargs are parsed in img.process())
+    # Set logging and outdir options (used before kwargs parsing in img.process())
     if 'quiet' in kwargs:
         img.opts.quiet = kwargs['quiet']
     if 'debug' in kwargs:
@@ -253,7 +345,6 @@ def process_image(input, **kwargs):
     if 'outdir' in kwargs:
         img.opts.outdir = kwargs['outdir']
 
-    # Now process it. Any kwargs specified by the user will
-    # override those read in from the parameter save file or dictionary.
+    # Standard path: let interface.process handle the full chain
     img.process(**kwargs)
     return img
