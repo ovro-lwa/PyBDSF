@@ -268,6 +268,8 @@ def process_image(input, **kwargs):
             basename = os.path.basename(img.opts.filename) + '.pybdsf.log'
             logfilename = os.path.join(basedir, basename)
             init_logger(logfilename, quiet=img.opts.quiet, debug=img.opts.debug)
+            # Ensure logger tag path exists on Image for downstream logging calls
+            img.log = logfilename
             mylog = _logging.getLogger("PyBDSF.Init")
             mylog.info("Processing in-memory FITS HDU")
 

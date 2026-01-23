@@ -1133,7 +1133,9 @@ def read_image_from_file(filename, img, indir, quiet=False):
     except ImportError as err:
         has_casacore = False
 
-    mylog = mylogger.logging.getLogger("PyBDSF."+img.log+"Readfile")
+    # Be robust if img.log is not yet set
+    log_tag = getattr(img, 'log', '')
+    mylog = mylogger.logging.getLogger("PyBDSF." + log_tag + "Readfile")
     
     # Detect if filename is an HDUList object
     is_hdulist = False
