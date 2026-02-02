@@ -88,20 +88,6 @@ If you must build from source, use system compilers with conda-provided Boost li
     pip install scikit-build setuptools wheel setuptools_scm
     pip install --no-build-isolation -v .
 
-
-.. warning:: Do NOT install conda compiler packages (``gxx_linux-64``, ``gfortran_linux-64``,
-  ``gcc_linux-64``) on RHEL8. They require GLIBC 2.14+ which RHEL8 doesn't have.
-  The CMAKE_ARGS environment variable ensures CMake uses system compilers instead of
-  conda's, even if conda tools are on the PATH.
-
-This approach uses conda's Boost libraries (including boost-numpy) while using RHEL8's
-system compilers that are compatible with the system GLIBC. Scikit-learn and other
-pure Python dependencies will be installed automatically as wheels.
-
-Alternatively, if you have a previously built installation and only want to update
-Python code (without recompiling C++/Fortran), you can directly copy the updated
-``.py`` files to your site-packages directory or reuse a previously built wheel.
-
 **External requirements for building from source (non-conda)**
 
 Ubuntu/Debian packages (or similar packages in another Linux distribution):
