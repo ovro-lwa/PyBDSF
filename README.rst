@@ -83,25 +83,11 @@ This completely avoids compilation and GLIBC compatibility issues.
 
 If you must build from source, use system compilers with conda-provided Boost libraries::
 
-    # Install system compilers and cmake
-    sudo yum install gcc gcc-c++ gcc-gfortran cmake3
-
-    # Create conda environment WITHOUT conda compilers
-    conda create -n pybdsf-build python=3.10
-    conda activate pybdsf-build
-    # Install libraries AND build dependencies (but NOT compilers)
-    conda install -c conda-forge boost-cpp numpy scipy astropy ninja cmake
+    conda create -n py312 python=3.12 && conda activate py312
+    conda install -c conda-forge libboost-python-devel numpy scipy astropy ninja cmake meson
     pip install scikit-build setuptools wheel setuptools_scm
-    
-    # Explicitly tell CMake to use system compilers
-    export CC=/usr/bin/gcc
-    export CXX=/usr/bin/g++
-    export FC=/usr/bin/gfortran
-    export CMAKE_PREFIX_PATH="${CONDA_PREFIX}/lib/cmake:${CMAKE_PREFIX_PATH}"
-    export CMAKE_ARGS="-DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ -DCMAKE_Fortran_COMPILER=/usr/bin/gfortran"
-    
-    # Build without build isolation
     pip install --no-build-isolation -v .
+
 
 .. warning:: Do NOT install conda compiler packages (``gxx_linux-64``, ``gfortran_linux-64``,
   ``gcc_linux-64``) on RHEL8. They require GLIBC 2.14+ which RHEL8 doesn't have.
