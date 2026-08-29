@@ -1100,6 +1100,23 @@ def read_image_from_file(filename, img, indir, quiet=False):
 
     PyFITS is required, as it is used to standardize the header format. python-casacore
     is optional.
+
+    Parameters
+    ----------
+    filename : str or HDUList
+        Either a filename string or a pre-opened FITS HDUList object (from pyfits.open()).
+        If an HDUList is passed, the indir parameter is ignored and the file will not be closed.
+    img : Image
+        Image object containing processing options
+    indir : str
+        Directory path (ignored if filename is an HDUList)
+    quiet : bool
+        If True, suppress logging messages
+
+    Returns
+    -------
+    tuple
+        (data, header) tuple, or None if file cannot be opened
     """
     from . import mylogger
     import os
@@ -1116,68 +1133,105 @@ def read_image_from_file(filename, img, indir, quiet=False):
     except ImportError as err:
         has_casacore = False
 
-    mylog = mylogger.logging.getLogger("PyBDSF."+img.log+"Readfile")
-    if indir is None or indir == './':
-        prefix = ''
-    else:
-        prefix = indir + '/'
-    image_file = prefix + filename
-
-    # Check that file exists
-    if not os.path.exists(image_file):
-        img._reason = f'File {image_file} does not exist'
-        return None
-
-    # If img.use_io is set, then use appropriate io module
-    if img.use_io:
-        # Sanity check: only 'fits' and 'rap' are supported image I/O types
-        if img.use_io not in ('fits', 'rap'):
-            raise ValueError(f"Invalid image I/O type '{img.use_io}'. "
-                             "Supported types are: 'fits' and 'rap'")
-        if img.use_io == 'fits':
-            try:
-                fits = pyfits.open(image_file, mode="readonly", ignore_missing_end=True)
-            except IOError as err:
-                img._reason = f'Problem reading {image_file}.\nOriginal error: {err}'
-                return None
-        if img.use_io == 'rap':
-            if not has_casacore:
-                img._reason = f'Problem reading {image_file}.\nCasacore is unavailable'
-                return None
-            try:
-                inputimage = pim.image(image_file)
-            except IOError as err:
-                img._reason = f'Problem reading {image_file}.\nOriginal error: {err}'
-                return None
-    else:
-        # First assume image is a fits file, and use pyfits to open it.
-        # If that fails, try to use casacore if available.
-        failed_read = False
+    # Be robust if img.log is not yet set
+    log_tag = getattr(img, 'log', '')
+    mylog = mylogger.logging.getLogger("PyBDSF." + log_tag + "Readfile")
+    
+    # Detect if filename is an HDUList object
+    is_hdulist = False
+    if isinstance(filename, pyfits.HDUList):
+        is_hdulist = True
+        fits = filename
+        # Try to get filename from HDUList if available
         try:
-            fits = pyfits.open(image_file, mode="readonly", ignore_missing_end=True)
+            if hasattr(fits, 'filename') and fits.filename:
+                image_file = fits.filename
+            else:
+                image_file = 'pre-opened HDUList'
+        except:
+            image_file = 'pre-opened HDUList'
+        # Set use_io to 'fits' if not already set
+        if not img.use_io:
             img.use_io = 'fits'
-        except IOError as err:
-            e_pyfits = str(err)
-            if has_casacore:
+        # Validate that use_io is 'fits' when HDUList is passed
+        if img.use_io != 'fits':
+            img._reason = 'HDUList object can only be used with FITS I/O (use_io must be "fits" or unset)'
+            return None
+        # Validate HDUList has at least one HDU
+        try:
+            _ = fits[0]
+        except (IndexError, AttributeError) as err:
+            img._reason = f'Invalid HDUList object: {err}'
+            return None
+    else:
+        # filename is a string - use existing file opening logic
+        if indir is None or indir == './':
+            prefix = ''
+        else:
+            prefix = indir + '/'
+        image_file = prefix + filename
+
+        # Check that file exists
+        if not os.path.exists(image_file):
+            img._reason = f'File {image_file} does not exist'
+            return None
+
+        # If img.use_io is set, then use appropriate io module
+        if img.use_io:
+            # Sanity check: only 'fits' and 'rap' are supported image I/O types
+            if img.use_io not in ('fits', 'rap'):
+                raise ValueError(f"Invalid image I/O type '{img.use_io}'. "
+                                 "Supported types are: 'fits' and 'rap'")
+            if img.use_io == 'fits':
+                try:
+                    fits = pyfits.open(image_file, mode="readonly", ignore_missing_end=True)
+                except IOError as err:
+                    img._reason = f'Problem reading {image_file}.\nOriginal error: {err}'
+                    return None
+            if img.use_io == 'rap':
+                if not has_casacore:
+                    img._reason = f'Problem reading {image_file}.\nCasacore is unavailable'
+                    return None
                 try:
                     inputimage = pim.image(image_file)
-                    img.use_io = 'rap'
                 except IOError as err:
-                    e_casacore = str(err)
+                    img._reason = f'Problem reading {image_file}.\nOriginal error: {err}'
+                    return None
+        else:
+            # First assume image is a fits file, and use pyfits to open it.
+            # If that fails, try to use casacore if available.
+            failed_read = False
+            try:
+                fits = pyfits.open(image_file, mode="readonly", ignore_missing_end=True)
+                img.use_io = 'fits'
+            except IOError as err:
+                e_pyfits = str(err)
+                if has_casacore:
+                    try:
+                        inputimage = pim.image(image_file)
+                        img.use_io = 'rap'
+                    except IOError as err:
+                        e_casacore = str(err)
+                        failed_read = True
+                        img._reason = 'File is not a valid FITS, CASA, or HDF5 image.'
+                else:
                     failed_read = True
-                    img._reason = 'File is not a valid FITS, CASA, or HDF5 image.'
-            else:
-                failed_read = True
-                e_casacore = "Casacore unavailable"
-                img._reason = f'Problem reading {image_file}.'
-        if failed_read:
-            img._reason += f'\nOriginal error: {e_pyfits}\n {e_casacore}'
-            return None
+                    e_casacore = "Casacore unavailable"
+                    img._reason = f'Problem reading {image_file}.'
+            if failed_read:
+                img._reason += f'\nOriginal error: {e_pyfits}\n {e_casacore}'
+                return None
+
+    # Track whether we opened the file ourselves (to know if we should close it)
+    file_opened_by_us = not is_hdulist
 
     # Now that image has been read in successfully, get header (data is loaded
     # later to take advantage of sectioning if trim_box is specified).
     if not quiet:
-        mylogger.userinfo(mylog, "Opened '"+image_file+"'")
+        if is_hdulist:
+            mylogger.userinfo(mylog, "Using pre-opened FITS HDUList")
+        else:
+            mylogger.userinfo(mylog, "Opened '"+image_file+"'")
     if img.use_io == 'rap':
         tmpdir = os.path.join(img.outdir, img.parentname+'_tmp')
         hdr = convert_casacore_header(inputimage, tmpdir)
@@ -1205,7 +1259,10 @@ def read_image_from_file(filename, img, indir, quiet=False):
         data_shape.append(hdr['NAXIS'+str(i+1)])
     data_shape.reverse()
     data_shape = tuple(data_shape)
-    mylog.info("Original data shape of " + image_file +': ' +str(data_shape))
+    if is_hdulist:
+        mylog.info("Original data shape of pre-opened HDUList: " + str(data_shape))
+    else:
+        mylog.info("Original data shape of " + image_file +': ' +str(data_shape))
     ctype_in = []
     for i in range(naxis):
         key_val_raw = hdr['CTYPE' + str(i+1)]
@@ -1303,7 +1360,8 @@ def read_image_from_file(filename, img, indir, quiet=False):
                 # If more than 4 axes, just read in the whole image and
                 # do the trimming after reordering.
                 data = fits[0].data
-            fits.close()
+            if file_opened_by_us:
+                fits.close()
             data = data.transpose(*indx_out) # transpose axes to final order
             data.shape = data.shape[0:4] # trim unused dimensions (if any)
             if naxis > 4:
@@ -1326,7 +1384,8 @@ def read_image_from_file(filename, img, indir, quiet=False):
     else:
         if img.use_io == 'fits':
             data = fits[0].data
-            fits.close()
+            if file_opened_by_us:
+                fits.close()
         else:
             data = inputimage.getdata()
         data = data.transpose(*indx_out) # transpose axes to final order
