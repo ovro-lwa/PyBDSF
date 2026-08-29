@@ -208,7 +208,8 @@ class Op_gaul2srl(Op):
                 mask = self.make_mask(isl, subn, subm, 1, isrc, g_sublist, delc)
                 src_index, source = self.process_Multiple(img, g_sublist, mask, src_index, isrc, subim, \
                                     isl, delc, subn, subm)
-            source_list.append(source)
+            if source is not None:
+                source_list.append(source)
 
         return src_index, source_list
 
@@ -374,9 +375,17 @@ class Op_gaul2srl(Op):
             mompara[2] = posn[1] - delc[1]
         y1 = int(N.floor(mompara[2]))
         xind = slice(x1, x1+2, 1); yind = slice(y1, y1+2, 1)
-        if img.opts.flag_smallsrc and (N.sum(mask[xind, yind]==N.ones((2,2))*isrc) != 4):
+        mask_patch = mask[xind, yind]
+        if mask_patch.shape != (2, 2):
+            mylog.warning(
+                'Skipping multi-Gaussian source %s in island %s: centroid (%s, %s) '
+                'falls outside the island mask (patch shape %s).',
+                isrc, isl.island_id, mompara[1], mompara[2], mask_patch.shape,
+            )
+            return src_index, None
+        if img.opts.flag_smallsrc and (N.sum(mask_patch==isrc) != 4):
             mylog.debug('Island = '+str(isl.island_id))
-            mylog.debug('Mask = '+repr(mask[xind, yind])+'xind, yind, x1, y1 = '+repr(xind)+' '+repr(yind)+' '+repr(x1)+' '+repr(y1))
+            mylog.debug('Mask = '+repr(mask_patch)+'xind, yind, x1, y1 = '+repr(xind)+' '+repr(yind)+' '+repr(x1)+' '+repr(y1))
         t=(mompara[1]-x1)/(x1+1-x1)  # in case u change it later
         u=(mompara[2]-y1)/(y1+1-y1)
         try:
@@ -388,7 +397,7 @@ class Op_gaul2srl(Op):
             # interpolation failed because source is too small
             # probably pathological, take a guess..
             s_peak=subim_src[x1,y1]
-        if (not img.opts.flag_smallsrc) and (N.sum(mask[xind, yind]==N.ones((2,2))*isrc) != 4):
+        if (not img.opts.flag_smallsrc) and (N.sum(mask_patch==isrc) != 4):
             mylog.debug('Speak '+repr(s_peak)+'Mompara = '+repr(mompara))
             mylog.debug('x1, y1 : '+repr(x1)+', '+repr(y1))
 
